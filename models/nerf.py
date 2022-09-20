@@ -9,6 +9,7 @@ class PosEmbedding(nn.Module):
         super().__init__()
         self.funcs = [torch.sin, torch.cos]
 
+        # logscale: N_freqsがlog scaleかどうか
         if logscale:
             self.freqs = 2**torch.linspace(0, max_logscale, N_freqs)
         else:
@@ -32,18 +33,18 @@ class PosEmbedding(nn.Module):
 
 class NeRF(nn.Module):
     def __init__(self, typ,
-                 D=8, W=256, skips=[4],
+                 D=8, W=256, skips=[4],# 論文ではW=512
                  in_channels_xyz=63, in_channels_dir=27,
-                 encode_appearance=False, in_channels_a=48,
-                 encode_transient=False, in_channels_t=16,
+                 encode_appearance=False, in_channels_a=48,# n^a = 48
+                 encode_transient=False, in_channels_t=16,# n^t = 16
                  beta_min=0.03):
         """
         ---Parameters for the original NeRF---
         D: number of layers for density (sigma) encoder
         W: number of hidden units in each layer
         skips: add skip connection in the Dth layer
-        in_channels_xyz: number of input channels for xyz (3+3*10*2=63 by default)
-        in_channels_dir: number of input channels for direction (3+3*4*2=27 by default)
+        in_channels_xyz: number of input channels for xyz (3+3*10*2=63 by default) (positional encoding の L = 10に対応)
+        in_channels_dir: number of input channels for direction (3+3*4*2=27 by default) (positional encoding の L = 4に対応)
         in_channels_t: number of input channels for t
 
         ---Parameters for NeRF-W (used in fine model only as per section 4.3)---
@@ -61,7 +62,7 @@ class NeRF(nn.Module):
         self.skips = skips
         self.in_channels_xyz = in_channels_xyz
         self.in_channels_dir = in_channels_dir
-
+        # coarseはnerfと同じ処理
         self.encode_appearance = False if typ=='coarse' else encode_appearance
         self.in_channels_a = in_channels_a if encode_appearance else 0
         self.encode_transient = False if typ=='coarse' else encode_transient
@@ -80,16 +81,16 @@ class NeRF(nn.Module):
             setattr(self, f"xyz_encoding_{i+1}", layer)
         self.xyz_encoding_final = nn.Linear(W, W)
 
-        # direction encoding layers
+        # direction encoding layers 
         self.dir_encoding = nn.Sequential(
                         nn.Linear(W+in_channels_dir+self.in_channels_a, W//2), nn.ReLU(True))
 
         # static output layers
-        self.static_sigma = nn.Sequential(nn.Linear(W, 1), nn.Softplus())
-        self.static_rgb = nn.Sequential(nn.Linear(W//2, 3), nn.Sigmoid())
+        self.static_sigma = nn.Sequential(nn.Linear(W, 1), nn.Softplus())# 論文ではrelu
+        self.static_rgb = nn.Sequential(nn.Linear(W//2, 3), nn.Sigmoid())# 本当は4layers。過学習を避けるためらしい。
 
         if self.encode_transient:
-            # transient encoding layers
+            # transient encoding layers # 4layers
             self.transient_encoding = nn.Sequential(
                                         nn.Linear(W+in_channels_t, W//2), nn.ReLU(True),
                                         nn.Linear(W//2, W//2), nn.ReLU(True),
@@ -118,6 +119,7 @@ class NeRF(nn.Module):
             else:
                 static_rgb, static_sigma
         """
+        # 引数はrendering.pyで指定される
         if sigma_only:
             input_xyz = x
         elif output_transient:

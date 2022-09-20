@@ -94,7 +94,7 @@ def batched_inference(models, embeddings,
                         ts[i:i+chunk] if ts is not None else None,
                         N_samples,
                         use_disp,
-                        0,
+                        0,# perturbは0
                         0,
                         N_importance,
                         chunk,

@@ -30,7 +30,7 @@ def sample_pdf(bins, weights, N_importance, det=False, eps=1e-5):
         u = torch.rand(N_rays, N_importance, device=bins.device)
     u = u.contiguous()
 
-    inds = torch.searchsorted(cdf, u, right=True)
+    inds = torch.searchsorted(cdf, u, right=True)# (N_rays,N_importance)
     below = torch.clamp_min(inds-1, 0)
     above = torch.clamp_max(inds, N_samples_)
 
@@ -52,13 +52,13 @@ def render_rays(models,
                 ts,
                 N_samples=64,
                 use_disp=False,
-                perturb=0,
+                perturb=0,# train時のデフォルト1
                 noise_std=1,
                 N_importance=0,
                 chunk=1024*32,
                 white_back=False,
                 test_time=False,
-                **kwargs
+                **kwargs# kwardsはeval時のみでtrain時無し
                 ):
     """
     Render rays by computing the output of @model applied on @rays and @ts
@@ -66,7 +66,7 @@ def render_rays(models,
         models: dict of NeRF models (coarse and fine) defined in nerf.py
         embeddings: dict of embedding models of origin and direction defined in nerf.py
         rays: (N_rays, 3+3), ray origins and directions
-        ts: (N_rays), ray time as embedding index
+        ts: (N_rays), ray time as embedding index 多分[N_rays, 3]
         N_samples: number of coarse samples per ray
         use_disp: whether to sample in disparity space (inverse depth)
         perturb: factor to perturb the sampling position on the ray (for coarse model only)
@@ -124,7 +124,7 @@ def render_rays(models,
                 out_chunks += [model(torch.cat(inputs, 1), output_transient=output_transient)]
 
             out = torch.cat(out_chunks, 0)
-            out = rearrange(out, '(n1 n2) c -> n1 n2 c', n1=N_rays, n2=N_samples_)
+            out = rearrange(out, '(n1 n2) c -> n1 n2 c', n1=N_rays, n2=N_samples_)# (N_rays, N_samples_, 4(+4))(rgb,sigma,(rgb,sigma,beta(transient)))
             static_rgbs = out[..., :3] # (N_rays, N_samples_, 3)
             static_sigmas = out[..., 3] # (N_rays, N_samples_)
             if output_transient:
@@ -147,8 +147,9 @@ def render_rays(models,
 
         alphas_shifted = \
             torch.cat([torch.ones_like(alphas[:, :1]), 1-alphas], -1) # [1, 1-a1, 1-a2, ...]
+        # paper (2)または(9)
         transmittance = torch.cumprod(alphas_shifted[:, :-1], -1) # [1, 1-a1, (1-a1)(1-a2), ...]
-
+        
         if output_transient:
             static_weights = static_alphas * transmittance
             transient_weights = transient_alphas * transmittance
@@ -157,7 +158,7 @@ def render_rays(models,
         weights_sum = reduce(weights, 'n1 n2 -> n1', 'sum')
 
         results[f'weights_{typ}'] = weights
-        results[f'opacity_{typ}'] = weights_sum
+        results[f'opacity_{typ}'] = weights_sum# 結果に含めるのはなぜか分からない
         if output_transient:
             results['transient_sigmas'] = transient_sigmas
         if test_time and typ == 'coarse':
@@ -166,7 +167,7 @@ def render_rays(models,
 
         if output_transient:
             static_rgb_map = reduce(rearrange(static_weights, 'n1 n2 -> n1 n2 1')*static_rgbs,
-                                    'n1 n2 c -> n1 c', 'sum')
+                                    'n1 n2 c -> n1 c', 'sum') # (N_rays, 1)
             if white_back:
                 static_rgb_map += 1-rearrange(weights_sum, 'n -> n 1')
             
@@ -176,6 +177,7 @@ def render_rays(models,
             results['beta'] = reduce(transient_weights*transient_betas, 'n1 n2 -> n1', 'sum')
             # Add beta_min AFTER the beta composition. Different from eq 10~12 in the paper.
             # See "Notes on differences with the paper" in README.
+            # 確かに違う
             results['beta'] += model.beta_min
             
             # the rgb maps here are when both fields exist
@@ -194,7 +196,7 @@ def render_rays(models,
                 static_rgb_map_ = \
                     reduce(rearrange(static_weights_, 'n1 n2 -> n1 n2 1')*static_rgbs,
                            'n1 n2 c -> n1 c', 'sum')
-                if white_back:
+                if white_back: 
                     static_rgb_map_ += 1-rearrange(weights_sum, 'n -> n 1')
                 results['rgb_fine_static'] = static_rgb_map_
                 results['depth_fine_static'] = \
@@ -233,7 +235,7 @@ def render_rays(models,
 
     # Sample depth points
     z_steps = torch.linspace(0, 1, N_samples, device=rays.device)
-    if not use_disp: # use linear sampling in depth space
+    if not use_disp: # use linear sampling in depth space デフォルトはfalse
         z_vals = near * (1-z_steps) + far * z_steps
     else: # use linear sampling in disparity space
         z_vals = 1/(1/near * (1-z_steps) + 1/far * z_steps)

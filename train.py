@@ -48,7 +48,7 @@ class NeRFSystem(LightningModule):
             self.models_to_train += [self.embedding_t]
 
         self.nerf_coarse = NeRF('coarse',
-                                in_channels_xyz=6*hparams.N_emb_xyz+3,
+                                in_channels_xyz=6*hparams.N_emb_xyz+3,#6=3*2はxyz,dirが3次元だから？
                                 in_channels_dir=6*hparams.N_emb_dir+3)
         self.models = {'coarse': self.nerf_coarse}
         if hparams.N_importance > 0:
@@ -63,7 +63,7 @@ class NeRFSystem(LightningModule):
             self.models['fine'] = self.nerf_fine
         self.models_to_train += [self.models]
 
-    def get_progress_bar_dict(self):
+    def get_progress_bar_dict(self):# ver1.5以降deprecated
         items = super().get_progress_bar_dict()
         items.pop("v_num", None)
         return items
@@ -127,20 +127,19 @@ class NeRFSystem(LightningModule):
     
     def training_step(self, batch, batch_nb):
         rays, rgbs, ts = batch['rays'], batch['rgbs'], batch['ts']
-        results = self(rays, ts)
-        loss_d = self.loss(results, rgbs)
+        results = self(rays, ts)# color計算
+        loss_d = self.loss(results, rgbs)# 損失計算
         loss = sum(l for l in loss_d.values())
 
         with torch.no_grad():
             typ = 'fine' if 'rgb_fine' in results else 'coarse'
             psnr_ = psnr(results[f'rgb_{typ}'], rgbs)
-
+            # psnr: Peak Signal to Noise Ratio
         self.log('lr', get_learning_rate(self.optimizer))
         self.log('train/loss', loss)
         for k, v in loss_d.items():
             self.log(f'train/{k}', v, prog_bar=True)
         self.log('train/psnr', psnr_, prog_bar=True)
-
         return loss
 
     def validation_step(self, batch, batch_nb):
@@ -161,7 +160,7 @@ class NeRFSystem(LightningModule):
             else:
                 W, H = self.hparams.img_wh
             img = results[f'rgb_{typ}'].view(H, W, 3).permute(2, 0, 1).cpu() # (3, H, W)
-            img_gt = rgbs.view(H, W, 3).permute(2, 0, 1).cpu() # (3, H, W)
+            img_gt = rgbs.view(H, W, 3).permute(2, 0, 1).cpu() # (3, H, W) gt: ground truth
             depth = visualize_depth(results[f'depth_{typ}'].view(H, W)) # (3, H, W)
             stack = torch.stack([img_gt, img, depth]) # (3, 3, H, W)
             self.logger.experiment.add_images('val/GT_pred_depth',
@@ -182,6 +181,7 @@ class NeRFSystem(LightningModule):
 
 def main(hparams):
     system = NeRFSystem(hparams)
+    # 結果の保存
     checkpoint_callback = \
         ModelCheckpoint(filepath=os.path.join(f'ckpts/{hparams.exp_name}',
                                                '{epoch:d}'),
